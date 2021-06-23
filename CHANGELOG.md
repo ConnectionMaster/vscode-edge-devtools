@@ -1,3 +1,51 @@
+## 1.2.0
+* **[Feature]**: The active DevTools window can now swtich between targets in the Target's list without needing to close and reopen. - [PR #415](https://github.com/microsoft/vscode-edge-devtools/pull/415)
+* **[Update]**: Edge DevTools Update - We have updated the DevTools version from 88 to 91. - [PR #414](https://github.com/microsoft/vscode-edge-devtools/pull/414)
+* **[Documentation]**: New home for Microsoft Edge DevTools for VS Code documentation. - [vscode-edge-devtools](https://microsoft.github.io/vscode-edge-devtools/)
+* **[Bug Fix]**: Styles pane informs users to refresh if attached to an initially paused target - [PR #410](https://github.com/microsoft/vscode-edge-devtools/pull/410)
+* **[Bug Fix]**: Updating Webpack Sourcemapping Overrides - [PR #423](https://github.com/microsoft/vscode-edge-devtools/pull/423)
+* **[Bug Fix]**: DevTools Console Output channel disabled when using Visual Studio Code JavaScript Debugger's Inspect entrypoint - [PR #412](https://github.com/microsoft/vscode-edge-devtools/pull/412)
+
+## 1.1.9
+* **[Feature]**: New integration with VSCode's JavaScript Debugger for attaching Microsoft Edge Devtools to the active debug target - [PR #391](https://github.com/microsoft/vscode-edge-devtools/pull/391)
+* **[Bug Fix]**: Accessibility - Screen readers now announces a success message for when using the "Toggle Property and continue editing" option in the style property context menu - [PR #390](https://github.com/microsoft/vscode-edge-devtools/pull/390)
+
+## 1.1.8
+* **[Feature]**: New default start page when launching Edge DevTools with useful instructions and links - [PR #350](https://github.com/microsoft/vscode-edge-devtools/pull/350)
+* **[Feature]**: New landing sidebar view for empty target lists with buttons to help launch a target or set up the launch.json file - [PR #357](https://github.com/microsoft/vscode-edge-devtools/pull/357)
+* **[Bug Fix]**: Adding and applying ESLint rules
+ [PR #335](https://github.com/microsoft/vscode-edge-devtools/pull/335)
+* **[Bug Fix]**: Edge DevTools instance now hosted directly inside the WebView - [PR #367](https://github.com/microsoft/vscode-edge-devtools/pull/367)
+
+## 1.1.7
+* **[Bug Fix]**: Retain focus on property after toggling with context menu
+ [PR #332](https://github.com/microsoft/vscode-edge-devtools/pull/332)
+* **[Bug Fix]**: Extension does not work and panel is blank - [PR #342](https://github.com/microsoft/vscode-edge-devtools/pull/342)
+
+## 1.1.6
+* **[Feature]**: Update Edge version to 88.0.705.9 - [PR #302](https://github.com/microsoft/vscode-edge-devtools/pull/302)
+* **[Bug Fix]**: Support for ARM devices [PR #293](https://github.com/microsoft/vscode-edge-devtools/pull/318)
+* **[Bug Fix]**: Side panel auto-refreshes when targets are created or destroyed - [PR #300](https://github.com/microsoft/vscode-edge-devtools/pull/300)
+* **[Bug Fix]**: Fixed bug where extension would be frozen loading favicons - [PR #293](https://github.com/microsoft/vscode-edge-devtools/pull/299)
+* **[Bug Fix]**: Increased stability to close target functionality - [PR #316](https://github.com/microsoft/vscode-edge-devtools/pull/316)
+* **[Bug Fix]**: Removed Debugger for Microsoft Edge as a dependency - [PR #329](https://github.com/microsoft/vscode-edge-devtools/pull/329)
+
+## 1.1.5
+* **[Feature]**: Add dropdown menu in title view containing link to settings and changelog - [PR #288](https://github.com/microsoft/vscode-edge-devtools/pull/288)
+* **[Feature]**: Created setting to show/hide service and shared workers from the target list - [PR #284](https://github.com/microsoft/vscode-edge-devtools/pull/284)
+* **[Bug Fix]**: Fixed vscode-edge-devtools-view.launch/refresh not found - [PR #287](https://github.com/microsoft/vscode-edge-devtools/pull/287)
+* **[Bug Fix]**: Fixed bug where multiple DevTools console output channels would persist - [PR #292](https://github.com/microsoft/vscode-edge-devtools/pull/292)
+
+## 1.1.4
+* **[Feature]**: DevTools Console messages now reroute to the VSCode output window - [PR #275](https://github.com/microsoft/vscode-edge-devtools/pull/275)
+* **[Feature]**: Target website favicon displays in the extension's target list - [PR #278](https://github.com/microsoft/vscode-edge-devtools/pull/278)
+* **[Bug Fix]**: Links to source code in Elements pane now redirect as expected - [PR #264](https://github.com/microsoft/vscode-edge-devtools/pull/264)
+* **[Bug Fix]**: Screencast cursor now uses default cursor - [PR #279](https://github.com/microsoft/vscode-edge-devtools/pull/279)
+* **[Feature]**: Read about the latest changes like these in the What's New tab - [PR #281](https://github.com/microsoft/vscode-edge-devtools/pull/281)
+
+## 1.1.3
+* Bumping Edge Devtools version from 85.0.564.40 to 87.0.668.0 - [PR #235](https://github.com/microsoft/vscode-edge-devtools/pull/251)
+
 ## 1.1.2
 * Bumping Edge Devtools version from 84.0.522.63 to 85.0.564.40 - [PR #235](https://github.com/microsoft/vscode-edge-devtools/pull/235)
 * Included Debugger for Microsoft Edge as a dependency - [PR #233](https://github.com/microsoft/vscode-edge-devtools/pull/233)

@@ -1,36 +1,53 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import * as fse from "fs-extra";
-import path from "path";
+import * as fse from 'fs-extra';
+import path from 'path';
 
-import applyPaddingInlineCssPatch from "./src/host/polyfills/cssPaddingInline";
-import { applyContentSecurityPolicyPatch } from "./src/host/polyfills/inspectorContentPolicy";
-import applyRuntimeImportScriptPathPrefixPatch from "./src/host/polyfills/runtime";
+import { applyRuntimeImportScriptPathPrefixPatch } from './src/host/polyfills/runtime';
+import {applyAnnouncementNamePatch, applyReleaseNotePatch, applySettingsCheckboxPatch, applyShowMorePatch} from './src/host/polyfills/releaseNote';
 import {
-    applyAppendTabPatch,
+    applyAppendTabOverridePatch,
+    applyAppendTabConditionsPatch,
     applyCommonRevealerPatch,
     applyCommandMenuPatch,
-    applyCreateExtensionSettingsPatch,
     applyCreateExtensionSettingsLegacyPatch,
     applyDefaultTabPatch,
     applyDrawerTabLocationPatch,
-    applyPortSettingsPatch,
+    applyExtensionSettingsInstantiatePatch,
+    applyExtensionSettingsRuntimeObjectPatch,
+    applyPortSettingsFunctionCallPatch,
     applyQuickOpenPatch,
     applyInspectorCommonContextMenuPatch,
     applyInspectorCommonCssPatch,
     applyInspectorCommonCssRightToolbarPatch,
     applyInspectorCommonCssTabSliderPatch,
     applyInspectorCommonNetworkPatch,
+    applyInspectorViewCloseDrawerPatch,
+    applyInspectorViewShowDrawerPatch,
     applyMainViewPatch,
-    applyPersistRequestBlockingTab,
+    applyMoveToContextMenuPatch,
+    applyPersistTabs,
+    applyQueryParamsObjectPatch,
     applyRemoveBreakOnContextMenuItem,
-    applyRemoveNonSupportedRevealContextMenu,
+    applyRerouteConsoleMessagePatch,
+    applyContextMenuRevealOption,
     applyRemovePreferencePatch,
+    applyScreencastCursorPatch,
+    applyScreencastTelemetry,
+    applyScreencastHeadlessPatch,
     applySetTabIconPatch,
-    applyShowRequestBlockingTab,
+    applyShowDrawerTabs,
+    applyStylesRevealerPatch,
+    applyStylesToggleFocusPatch,
     applyThemePatch,
-} from "./src/host/polyfills/simpleView";
-import applySetupTextSelectionPatch from "./src/host/polyfills/textSelection";
+    applyNoMatchingStylesPatch,
+    applyExtensionSettingExportPatch,
+    applyPortSettingsFunctionCreationPatch,
+    applyConsoleImportPatch,
+    applyExperimentsEnabledPatch,
+} from './src/host/polyfills/simpleView';
+import { applySetupTextSelectionPatch } from './src/host/polyfills/textSelection';
+import { applyThirdPartyI18nLocalesPatch } from './src/host/polyfills/thirdPartyI18n';
 
 async function copyFile(srcDir: string, outDir: string, name: string) {
     await fse.copy(
@@ -41,18 +58,12 @@ async function copyFile(srcDir: string, outDir: string, name: string) {
 
 async function copyStaticFiles() {
     // Copy the static css file to the out directory
-    const commonSrcDir = "./src/common/";
-    const commonOutDir = "./out/common/";
+    const commonSrcDir = './src/common/';
+    const commonOutDir = './out/common/';
     await fse.ensureDir(commonOutDir);
-    await copyFile(commonSrcDir, commonOutDir, "styles.css");
+    await copyFile(commonSrcDir, commonOutDir, 'styles.css');
 
     const sourceFilesPath = path.normalize(__dirname + '/out/edge/src');
-
-    const toolsSrcDir = path.normalize(`${sourceFilesPath}/third_party/devtools-frontend/src/front_end/`);
-    if (!isDirectory(toolsSrcDir)) {
-        throw new Error(`Could not find Microsoft Edge DevTools path at '${toolsSrcDir}'. ` +
-            "Did you run the 'npm run download-edge' script?");
-    }
 
     const toolsGenDir = path.normalize(`${sourceFilesPath}/out/Release/gen/devtools/`);
     if (!isDirectory(toolsGenDir)) {
@@ -63,22 +74,21 @@ async function copyStaticFiles() {
     const toolsResDir = path.normalize(`${sourceFilesPath}/out/Release/resources/inspector/`);
 
     // Copy the devtools to the out directory
-    const toolsOutDir = "./out/tools/front_end/";
-    await fse.remove("./out/tools/front_end/");
+    const toolsOutDir = './out/tools/front_end/';
+    await fse.remove('./out/tools/front_end/');
     await fse.ensureDir(toolsOutDir);
-    await fse.copy(toolsSrcDir, toolsOutDir);
 
     // Copy the devtools generated files to the out directory
     await fse.copy(toolsGenDir, toolsOutDir);
 
     // Copy the optional devtools resource files to the out directory
     if (isDirectory(toolsResDir)) {
-        await copyFile(toolsResDir, toolsOutDir, "InspectorBackendCommands.js");
-        await copyFile(toolsResDir, toolsOutDir, "SupportedCSSProperties.js");
+        await copyFile(toolsResDir, toolsOutDir, 'InspectorBackendCommands.js');
+        await copyFile(toolsResDir, toolsOutDir, 'SupportedCSSProperties.js');
         await copyFile(
-            path.join(toolsResDir, "accessibility"),
-            path.join(toolsOutDir, "accessibility"),
-            "ARIAProperties.js",
+            path.join(toolsResDir, 'accessibility'),
+            path.join(toolsOutDir, 'accessibility'),
+            'ARIAProperties.js',
         );
     }
 
@@ -87,62 +97,107 @@ async function copyStaticFiles() {
 }
 
 async function patchFilesForWebView(toolsOutDir: string) {
-    // tslint:disable-next-line:no-console
-    console.log("Patching files.");
-    await patchFileForWebViewWrapper("shell.js", toolsOutDir, [
+    // eslint-disable-next-line no-console
+    console.log('Patching files.');
+    await patchFileForWebViewWrapper('shell.js', toolsOutDir, [
         applyInspectorCommonContextMenuPatch,
         applyInspectorCommonCssRightToolbarPatch,
         applyInspectorCommonCssPatch,
         applyInspectorCommonNetworkPatch,
         applyInspectorCommonCssTabSliderPatch,
     ]);
-    await patchFileForWebViewWrapper("main/main.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('main/MainImpl.js', toolsOutDir, [
+        applyInspectorViewCloseDrawerPatch,
         applyMainViewPatch,
+        applyExperimentsEnabledPatch,
     ]);
-    await patchFileForWebViewWrapper("elements/elements.js", toolsOutDir, [
-        applySetupTextSelectionPatch,
-    ]);
-    await patchFileForWebViewWrapper("common/common.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('core/common/Revealer.js', toolsOutDir, [
         applyCommonRevealerPatch,
     ]);
-    await patchFileForWebViewWrapper("components/components.js", toolsOutDir, [
-        applyRemoveNonSupportedRevealContextMenu,
+    await patchFileForWebViewWrapper('components/Linkifier.js', toolsOutDir, [
+        applyContextMenuRevealOption,
     ]);
-    await patchFileForWebViewWrapper("elements/elements_module.js", toolsOutDir, [
-        applyPaddingInlineCssPatch,
+    // Post built files swap upstream and downstream names
+    await patchFileForWebViewWrapper('panels/elements/StylesSidebarPane_edge.js', toolsOutDir, [
+        applyNoMatchingStylesPatch
     ]);
-    await patchFileForWebViewWrapper("host/host.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('panels/elements/ElementsPanel.js', toolsOutDir, [
+        applySetupTextSelectionPatch,
+    ]);
+    await patchFileForWebViewWrapper('panels/elements/StylePropertyTreeElement.js', toolsOutDir, [
+        applyStylesRevealerPatch,
+        applyStylesToggleFocusPatch,
+    ]);
+    await patchFileForWebViewWrapper('core/host/InspectorFrontendHost.js', toolsOutDir, [
         applyRemovePreferencePatch,
     ]);
-    await patchFileForWebViewWrapper("inspector.html", toolsOutDir, [
-        applyContentSecurityPolicyPatch,
+    await patchFileForWebViewWrapper('screencast/ScreencastView.js', toolsOutDir, [
+        applyScreencastCursorPatch,
     ]);
-    await patchFileForWebViewWrapper("ui/ui.js", toolsOutDir, [
-        applyAppendTabPatch,
-        applyDefaultTabPatch,
-        applyDrawerTabLocationPatch,
-        applyPersistRequestBlockingTab,
+    await patchFileForWebViewWrapper('screencast/ScreencastApp.js', toolsOutDir, [
+        applyScreencastTelemetry,
+        applyScreencastHeadlessPatch,
+    ]);
+    await patchFileForWebViewWrapper('ui/legacy/TabbedPane.js', toolsOutDir, [
+        applyAppendTabOverridePatch,
+        applyAppendTabConditionsPatch,
+        applyPersistTabs,
         applySetTabIconPatch,
-        applyShowRequestBlockingTab,
     ]);
-    await patchFileForWebViewWrapper("root/root.js", toolsOutDir, [
-        applyCreateExtensionSettingsPatch,
-        applyPortSettingsPatch,
+    await patchFileForWebViewWrapper('ui/legacy/InspectorView.js', toolsOutDir, [
+        applyMoveToContextMenuPatch,
+    ]);
+    await patchFileForWebViewWrapper('ui/legacy/InspectorView_edge.js', toolsOutDir, [
+        applyDrawerTabLocationPatch,
+        applyInspectorViewShowDrawerPatch,
+    ]);
+    await patchFileForWebViewWrapper('ui/legacy/ViewManager.js', toolsOutDir, [
+        applyDefaultTabPatch,
+        applyShowDrawerTabs,
+    ]);
+    await patchFileForWebViewWrapper('core/root/Runtime_edge.js', toolsOutDir, [
+        applyQueryParamsObjectPatch,
         applyRuntimeImportScriptPathPrefixPatch,
     ]);
-    await patchFileForWebViewWrapper("root/root-legacy.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('core/root/Runtime.js', toolsOutDir, [
+        applyExtensionSettingsInstantiatePatch,
+        applyExtensionSettingsRuntimeObjectPatch,
+        applyExtensionSettingExportPatch,
+        applyPortSettingsFunctionCallPatch,
+        applyPortSettingsFunctionCreationPatch,
+    ]);
+    await patchFileForWebViewWrapper('core/root/root-legacy.js', toolsOutDir, [
         applyCreateExtensionSettingsLegacyPatch,
     ]);
-    await patchFileForWebViewWrapper("quick_open/quick_open.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('quick_open/CommandMenu_edge.js', toolsOutDir, [
         applyCommandMenuPatch,
+    ]);
+    await patchFileForWebViewWrapper('quick_open/QuickOpen.js', toolsOutDir, [
         applyQuickOpenPatch,
     ]);
-    await patchFileForWebViewWrapper("browser_debugger/browser_debugger.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('panels/browser_debugger/DOMBreakpointsSidebarPane.js', toolsOutDir, [
         applyRemoveBreakOnContextMenuItem,
     ]);
-    await patchFileForWebViewWrapper("themes/themes.js", toolsOutDir, [
+    await patchFileForWebViewWrapper('themes/ThemesImpl.js', toolsOutDir, [
         applyThemePatch,
-    ])
+    ]);
+    await patchFileForWebViewWrapper('welcome/WelcomePanel.js', toolsOutDir, [
+        applyAnnouncementNamePatch,
+        applySettingsCheckboxPatch,
+    ]);
+    await patchFileForWebViewWrapper('panels/help/ReleaseNoteText.js', toolsOutDir, [
+        applyReleaseNotePatch,
+    ]);
+    await patchFileForWebViewWrapper('core/sdk/ConsoleModel.js', toolsOutDir, [
+        applyRerouteConsoleMessagePatch,
+        applyConsoleImportPatch,
+    ]);
+    await patchFileForWebViewWrapper('third_party/i18n/i18n-bundle.js', toolsOutDir, [
+        applyThirdPartyI18nLocalesPatch,
+    ]);
+    await patchFileForWebViewWrapper('welcome/WhatsNewList.js', toolsOutDir, [
+        applyShowMorePatch,
+    ]);
 }
 
 // This function wraps the patchFileForWebView function to catch any errors thrown, log them
@@ -153,7 +208,7 @@ async function patchFileForWebViewWrapper(
     dir: string,
     patches: ((content: string) => string | null)[]) {
     await patchFileForWebView(filename, dir, patches)
-        .catch((errorMessage) => {
+        .catch(errorMessage => {
             // tslint:disable-next-line:no-console
             console.error(errorMessage);
             process.exit(1);
@@ -175,7 +230,7 @@ async function patchFileForWebView(
     let content = (await fse.readFile(file)).toString();
 
     // Apply each patch in order
-    patches.forEach((patchFunction) => {
+    patches.forEach(patchFunction => {
         const patchResult: string | null = patchFunction(content);
         if (patchResult) {
             content = patchResult;
@@ -199,7 +254,7 @@ function isDirectory(fullPath: string) {
 
 function main() {
     copyStaticFiles()
-        .catch((errorMessage) => {
+        .catch(errorMessage => {
             // tslint:disable-next-line:no-console
             console.error(errorMessage);
             process.exit(1);

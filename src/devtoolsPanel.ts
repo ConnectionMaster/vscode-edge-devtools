@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import * as path from "path";
-import * as vscode from "vscode";
-import * as debugCore from "vscode-chrome-debug-core";
-import TelemetryReporter from "vscode-extension-telemetry";
+import * as path from 'path';
+import * as vscode from 'vscode';
+import * as debugCore from 'vscode-chrome-debug-core';
+import { performance } from 'perf_hooks';
+import TelemetryReporter from 'vscode-extension-telemetry';
 
-import { SettingsProvider } from "./common/settingsProvider";
+import { SettingsProvider } from './common/settingsProvider';
 import {
     encodeMessageForChannel,
     IOpenEditorData,
@@ -13,8 +14,9 @@ import {
     ITelemetryProps,
     TelemetryData,
     WebSocketEvent,
-} from "./common/webviewEvents";
-import { PanelSocket } from "./panelSocket";
+} from './common/webviewEvents';
+import { JsDebugProxyPanelSocket } from './JsDebugProxyPanelSocket';
+import { PanelSocket } from './panelSocket';
 import {
     applyPathMapping,
     fetchUri,
@@ -23,7 +25,7 @@ import {
     SETTINGS_PREF_NAME,
     SETTINGS_STORE_NAME,
     SETTINGS_WEBVIEW_NAME,
-} from "./utils";
+} from './utils';
 
 export class DevToolsPanel {
     private static instance: DevToolsPanel | undefined;
@@ -35,6 +37,8 @@ export class DevToolsPanel {
     private readonly telemetryReporter: Readonly<TelemetryReporter>;
     private readonly targetUrl: string;
     private panelSocket: PanelSocket;
+    private consoleOutput: vscode.OutputChannel;
+    private timeStart: number | null;
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -48,21 +52,44 @@ export class DevToolsPanel {
         this.extensionPath = this.context.extensionPath;
         this.targetUrl = targetUrl;
         this.config = config;
+        this.timeStart = null;
+        this.consoleOutput = vscode.window.createOutputChannel('DevTools Console');
+        if (config.isJsDebugProxiedCDPConnection) {
+            // Direct users to the Debug Console
+            this.consoleOutput.appendLine('// Microsoft Edge Devtools Extension:');
+            this.consoleOutput.appendLine('// You have connected to a target using Visual Studio Code\'s JavaScript Debugger.');
+            this.consoleOutput.appendLine('// Please use the "Debug Console" to view console messages from your webpage and evaluate expressions.');
+        } else {
+            // Provide 1-way console when attached to a target that is not the current debug target
+            this.consoleOutput.appendLine('// Microsoft Edge Devtools Extension:');
+            this.consoleOutput.appendLine('// This Output window displays the DevTools extension\'s console output in text format.');
+            this.consoleOutput.appendLine('// Note that this feature is only unidirectional and cannot communicate back to the DevTools.');
+            this.consoleOutput.appendLine('');
+        }
 
         // Hook up the socket events
-        this.panelSocket = new PanelSocket(this.targetUrl, (e, msg) => this.postToDevTools(e, msg));
-        this.panelSocket.on("ready", () => this.onSocketReady());
-        this.panelSocket.on("websocket", () => this.onSocketMessage());
-        this.panelSocket.on("telemetry", (msg) => this.onSocketTelemetry(msg));
-        this.panelSocket.on("getState", (msg) => this.onSocketGetState(msg));
-        this.panelSocket.on("getVscodeSettings", (msg) => this.onSocketGetVscodeSettings(msg));
-        this.panelSocket.on("setState", (msg) => this.onSocketSetState(msg));
-        this.panelSocket.on("getUrl", (msg) => this.onSocketGetUrl(msg));
-        this.panelSocket.on("openInEditor", (msg) => this.onSocketOpenInEditor(msg));
-        this.panelSocket.on("close", () => this.onSocketClose());
-        this.panelSocket.on("copyText", (msg) => this.onSocketCopyText(msg));
-        this.panelSocket.on("focusEditor", (msg) => this.onSocketFocusEditor(msg));
-        this.panelSocket.on("focusEditorGroup", (msg) => this.onSocketFocusEditorGroup(msg));
+        if (this.config.isJsDebugProxiedCDPConnection) {
+            this.panelSocket = new JsDebugProxyPanelSocket(this.targetUrl, (e, msg) => this.postToDevTools(e, msg));
+        } else {
+            this.panelSocket = new PanelSocket(this.targetUrl, (e, msg) => this.postToDevTools(e, msg));
+        }
+        this.panelSocket.on('ready', () => this.onSocketReady());
+        this.panelSocket.on('websocket', () => this.onSocketMessage());
+        this.panelSocket.on('telemetry', msg => this.onSocketTelemetry(msg));
+        this.panelSocket.on('getState', msg => this.onSocketGetState(msg));
+        this.panelSocket.on('getVscodeSettings', msg => this.onSocketGetVscodeSettings(msg));
+        this.panelSocket.on('setState', msg => this.onSocketSetState(msg));
+        this.panelSocket.on('getUrl', msg => this.onSocketGetUrl(msg) as unknown as void);
+        this.panelSocket.on('openUrl', msg => this.onSocketOpenUrl(msg) as unknown as void);
+        this.panelSocket.on('openInEditor', msg => this.onSocketOpenInEditor(msg) as unknown as void);
+        this.panelSocket.on('close', () => this.onSocketClose());
+        this.panelSocket.on('copyText', msg => this.onSocketCopyText(msg));
+        this.panelSocket.on('focusEditor', msg => this.onSocketFocusEditor(msg));
+        this.panelSocket.on('focusEditorGroup', msg => this.onSocketFocusEditorGroup(msg));
+        if (!config.isJsDebugProxiedCDPConnection){
+            // Provide 1-way console when attached to a target that is not the current debug target
+            this.panelSocket.on('consoleOutput', msg => this.onSocketConsoleOutput(msg));
+        }
 
         // Handle closing
         this.panel.onDidDispose(() => {
@@ -70,25 +97,30 @@ export class DevToolsPanel {
         }, this, this.disposables);
 
         // Handle view change
-        this.panel.onDidChangeViewState((e) => {
+        this.panel.onDidChangeViewState(_e => {
             if (this.panel.visible) {
                 this.update();
             }
         }, this, this.disposables);
 
         // Handle messages from the webview
-        this.panel.webview.onDidReceiveMessage((message) => {
+        this.panel.webview.onDidReceiveMessage(message => {
             this.panelSocket.onMessageFromWebview(message);
         }, this, this.disposables);
     }
 
-    public dispose() {
+    dispose(): void {
         DevToolsPanel.instance = undefined;
 
         this.panel.dispose();
         this.panelSocket.dispose();
-
-        this.telemetryReporter.sendTelemetryEvent("websocket/dispose");
+        this.consoleOutput.dispose();
+        if (this.timeStart !== null) {
+            const timeEnd = performance.now();
+            const sessionTime = timeEnd - this.timeStart;
+            this.telemetryReporter.sendTelemetryEvent('websocket/dispose', undefined, {sessionTime});
+            this.timeStart = null;
+        }
 
         while (this.disposables.length) {
             const d = this.disposables.pop();
@@ -100,19 +132,20 @@ export class DevToolsPanel {
 
     private postToDevTools(e: WebSocketEvent, message?: string) {
         switch (e) {
-            case "open":
-            case "close":
-            case "error":
+            case 'open':
+            case 'close':
+            case 'error':
                 this.telemetryReporter.sendTelemetryEvent(`websocket/${e}`);
                 break;
         }
-        encodeMessageForChannel((msg) => this.panel.webview.postMessage(msg), "websocket", { event: e, message });
+        encodeMessageForChannel(msg => this.panel.webview.postMessage(msg) as unknown as void, 'websocket', { event: e, message });
     }
 
     private onSocketReady() {
         // Report success telemetry
         this.telemetryReporter.sendTelemetryEvent(
-            this.panelSocket.isConnectedToTarget ? "websocket/reconnect" : "websocket/connect");
+            this.panelSocket.isConnectedToTarget ? 'websocket/reconnect' : 'websocket/connect');
+        this.timeStart = performance.now();
     }
 
     private onSocketMessage() {
@@ -125,33 +158,38 @@ export class DevToolsPanel {
 
     private onSocketCopyText(message: string) {
         const { clipboardData } = JSON.parse(message) as { clipboardData: string };
-        vscode.env.clipboard.writeText(clipboardData);
+        void vscode.env.clipboard.writeText(clipboardData);
     }
 
     private onSocketFocusEditor(message: string) {
         const { next } = JSON.parse(message) as { next: boolean };
         if (next) {
-            vscode.commands.executeCommand("workbench.action.nextEditor");
+            void vscode.commands.executeCommand('workbench.action.nextEditor');
         } else {
-            vscode.commands.executeCommand("workbench.action.previousEditor");
+            void vscode.commands.executeCommand('workbench.action.previousEditor');
         }
     }
 
     private onSocketFocusEditorGroup(message: string) {
         const { next } = JSON.parse(message) as { next: boolean };
         if (next) {
-            vscode.commands.executeCommand("workbench.action.focusNextGroup");
+            void vscode.commands.executeCommand('workbench.action.focusNextGroup');
         } else {
-            vscode.commands.executeCommand("workbench.action.focusPreviousGroup");
+            void vscode.commands.executeCommand('workbench.action.focusPreviousGroup');
         }
     }
 
+    private onSocketConsoleOutput(message: string) {
+        const { consoleMessage } = JSON.parse(message) as { consoleMessage : string };
+        this.consoleOutput.appendLine(consoleMessage);
+    }
+
     private onSocketTelemetry(message: string) {
-        const telemetry: TelemetryData = JSON.parse(message);
+        const telemetry: TelemetryData = JSON.parse(message) as TelemetryData;
 
         // Fire telemetry
         switch (telemetry.event) {
-            case "performance": {
+            case 'performance': {
                 const measures: ITelemetryMeasures = {};
                 measures[`${telemetry.name}.duration`] = telemetry.data;
                 this.telemetryReporter.sendTelemetryEvent(
@@ -161,7 +199,7 @@ export class DevToolsPanel {
                 break;
             }
 
-            case "enumerated": {
+            case 'enumerated': {
                 const properties: ITelemetryProps = {};
                 properties[`${telemetry.name}.actionCode`] = telemetry.data.toString();
                 this.telemetryReporter.sendTelemetryEvent(
@@ -170,7 +208,7 @@ export class DevToolsPanel {
                 break;
             }
 
-            case "error": {
+            case 'error': {
                 const properties: ITelemetryProps = {};
                 properties[`${telemetry.name}.info`] = JSON.stringify(telemetry.data);
                 this.telemetryReporter.sendTelemetryErrorEvent(
@@ -183,43 +221,50 @@ export class DevToolsPanel {
 
     private onSocketGetState(message: string) {
         const { id } = JSON.parse(message) as { id: number };
-        const preferences: any = this.context.workspaceState.get(SETTINGS_PREF_NAME) || SETTINGS_PREF_DEFAULTS;
-        encodeMessageForChannel((msg) => this.panel.webview.postMessage(msg), "getState", { id, preferences });
+        const preferences: Record<string, unknown> = this.context.workspaceState.get(SETTINGS_PREF_NAME) || SETTINGS_PREF_DEFAULTS;
+        encodeMessageForChannel(msg => this.panel.webview.postMessage(msg) as unknown as void, 'getState', { id, preferences });
     }
 
     private onSocketGetVscodeSettings(message: string) {
         const { id } = JSON.parse(message) as { id: number };
-        encodeMessageForChannel((msg) => this.panel.webview.postMessage(msg), "getVscodeSettings", {
+        encodeMessageForChannel(msg => this.panel.webview.postMessage(msg) as unknown as void, 'getVscodeSettings', {
             enableNetwork: SettingsProvider.instance.isNetworkEnabled(),
             themeString: SettingsProvider.instance.getThemeSettings(),
+            welcome: SettingsProvider.instance.getWelcomeSettings(),
+            isHeadless: SettingsProvider.instance.getHeadlessSettings(),
             id });
     }
 
     private onSocketSetState(message: string) {
         // Parse the preference from the message and store it
         const { name, value } = JSON.parse(message) as { name: string, value: string };
-        const allPref: any = this.context.workspaceState.get(SETTINGS_PREF_NAME) || {};
+        const allPref: Record<string, unknown> = this.context.workspaceState.get(SETTINGS_PREF_NAME) || {};
         allPref[name] = value;
-        this.context.workspaceState.update(SETTINGS_PREF_NAME, allPref);
+        void this.context.workspaceState.update(SETTINGS_PREF_NAME, allPref);
     }
 
     private async onSocketGetUrl(message: string) {
         // Parse the request from the message and store it
         const request = JSON.parse(message) as { id: number, url: string };
 
-        let content = "";
+        let content = '';
         try {
             content = await fetchUri(request.url);
         } catch {
             // Response will not have content
         }
 
-        encodeMessageForChannel((msg) => this.panel.webview.postMessage(msg), "getUrl", { id: request.id, content });
+        encodeMessageForChannel(msg => this.panel.webview.postMessage(msg) as unknown as void, 'getUrl', { id: request.id, content });
+    }
+
+    private onSocketOpenUrl(message: string) {
+      const { url } = JSON.parse(message) as { url: string };
+      void vscode.env.openExternal(vscode.Uri.parse(url));
     }
 
     private async onSocketOpenInEditor(message: string) {
         // Report usage telemetry
-        this.telemetryReporter.sendTelemetryEvent("extension/openInEditor", {
+        this.telemetryReporter.sendTelemetryEvent('extension/openInEditor', {
             sourceMaps: `${this.config.sourceMaps}`,
         });
 
@@ -241,7 +286,7 @@ export class DevToolsPanel {
 
         // Convert the local url to a workspace path
         const transformer = new debugCore.UrlPathTransformer();
-        transformer.launch({ pathMapping: this.config.pathMapping });
+        void transformer.launch({ pathMapping: this.config.pathMapping });
         const localSource = { path: sourcePath };
         await transformer.fixSource(localSource);
 
@@ -262,7 +307,7 @@ export class DevToolsPanel {
         // Finally open the document if it exists
         if (uri) {
             const doc = await vscode.workspace.openTextDocument(uri);
-            vscode.window.showTextDocument(
+            void vscode.window.showTextDocument(
                 doc,
                 {
                     preserveFocus: true,
@@ -270,7 +315,7 @@ export class DevToolsPanel {
                     viewColumn: vscode.ViewColumn.One,
                 });
         } else {
-            vscode.window.showErrorMessage(`Could not open document. No workspace mapping was found for '${url}'.`);
+            void vscode.window.showErrorMessage(`Could not open document. No workspace mapping was found for '${url}'.`);
         }
     }
 
@@ -279,46 +324,63 @@ export class DevToolsPanel {
     }
 
     private getHtmlForWebview() {
-        const htmlPath = vscode.Uri.file(path.join(this.extensionPath, "out/tools/front_end", "inspector.html"));
-        const htmlUri = this.panel.webview.asWebviewUri(htmlPath);
+        // stringsUri and inspectorUri are the files that used to be loaded in inspector.html
+        // They are being loaded directly into the webview.
+        // local resource loading inside iframes was deprecated in these commits:
+        // https://github.com/microsoft/vscode/commit/de9887d9e0eaf402250d2735b3db5dc340184b74
+        // https://github.com/microsoft/vscode/commit/d05ded6d3b64fed4a3cc74106f9b6c72243b18de
+        const stringsPath = vscode.Uri.file(path.join(this.extensionPath, 'out/tools/front_end', 'strings.js'));
+        const stringsUri = this.panel.webview.asWebviewUri(stringsPath);
 
-        const scriptPath = vscode.Uri.file(path.join(this.extensionPath, "out", "host", "messaging.bundle.js"));
-        const scriptUri = this.panel.webview.asWebviewUri(scriptPath);
+        const inspectorPath = vscode.Uri.file(path.join(this.extensionPath, 'out/tools/front_end', 'inspector.js'));
+        const inspectorUri = this.panel.webview.asWebviewUri(inspectorPath);
 
-        const stylesPath = vscode.Uri.file(path.join(this.extensionPath, "out", "common", "styles.css"));
+        const hostPath = vscode.Uri.file(path.join(this.extensionPath, 'out', 'host', 'host.bundle.js'));
+        const hostUri = this.panel.webview.asWebviewUri(hostPath);
+
+        const stylesPath = vscode.Uri.file(path.join(this.extensionPath, 'out', 'common', 'styles.css'));
         const stylesUri = this.panel.webview.asWebviewUri(stylesPath);
 
+        // the added fields for "Content-Security-Policy" allow resource loading for other file types
         return `
             <!doctype html>
             <html>
             <head>
+                <base href="${inspectorUri}">
                 <meta http-equiv="content-type" content="text/html; charset=utf-8">
                 <meta http-equiv="Content-Security-Policy"
-                    content="default-src 'none';
-                    frame-src ${this.panel.webview.cspSource};
-                    script-src ${this.panel.webview.cspSource};
-                    style-src ${this.panel.webview.cspSource};
-                    ">
+                    content="default-src;
+                    img-src 'self' data: ${this.panel.webview.cspSource};
+                    style-src 'self' 'unsafe-inline' ${this.panel.webview.cspSource};
+                    script-src 'self' 'unsafe-eval' ${this.panel.webview.cspSource};
+                    frame-src 'self' ${this.panel.webview.cspSource};
+                    connect-src 'self' data: ${this.panel.webview.cspSource};
+                ">
+                <meta name="referrer" content="no-referrer">
                 <link href="${stylesUri}" rel="stylesheet"/>
-                <script src="${scriptUri}"></script>
+                <script src="${hostUri}"></script>
+                <script src="${stringsUri}"></script>
+                <script type="module" src="${inspectorUri}"></script>
             </head>
             <body>
-                <iframe id="host" frameBorder="0" src="${htmlUri}?ws=trueD&experiments=true&edgeThemes=true"></iframe>
             </body>
             </html>
             `;
     }
 
-    public static createOrShow(
+    static createOrShow(
         context: vscode.ExtensionContext,
         telemetryReporter: Readonly<TelemetryReporter>,
         targetUrl: string,
-        config: IRuntimeConfig) {
+        config: IRuntimeConfig): void {
         const column = vscode.ViewColumn.Beside;
 
-        if (DevToolsPanel.instance) {
-            DevToolsPanel.instance.panel.reveal(column);
+        if (DevToolsPanel.instance && DevToolsPanel.instance.targetUrl === targetUrl) {
+                DevToolsPanel.instance.panel.reveal(column);
         } else {
+            if (DevToolsPanel.instance) {
+                DevToolsPanel.instance.dispose();
+            }
             const panel = vscode.window.createWebviewPanel(SETTINGS_STORE_NAME, SETTINGS_WEBVIEW_NAME, column, {
                 enableCommandUris: true,
                 enableScripts: true,

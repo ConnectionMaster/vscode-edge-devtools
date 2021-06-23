@@ -1,25 +1,22 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const TARGET_VERSION = '85.0.564.40';
-const targetVersionMap = new Map([
-  ['83', '83.0.478.45'],
-  ['84', '84.0.522.63'],
-  ['85', '85.0.564.40']
-]);
-var isWindows = true;
+const fs = require('fs-extra');
+const path = require('path');
+const yargs = require('yargs');
+const https = require('https');
+const unzipper = require('unzipper');
+const XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
 
-function getTargetVersion(version) {
-  let fullVersion = targetVersionMap.get(version);
-  if (!fullVersion) {
-    fullVersion = TARGET_VERSION;
-  }
-  return fullVersion;
-}
+
+const TARGET_VERSION = '91.0.864.48';
+const targetVersionMap = new Map([
+  ['88', '88.0.705.9'],
+  ['91', '91.0.864.48'],
+]);
 
 function fetchJsonFromUrl(url){
-  var XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
-  var Httpreq = new XMLHttpRequest();
+  const Httpreq = new XMLHttpRequest();
   Httpreq.open("GET", url, false);
   Httpreq.send(null);
   return Httpreq.responseText;
@@ -28,61 +25,48 @@ function fetchJsonFromUrl(url){
 function fetchDownloadUrl(version) {
   const jsonString = fetchJsonFromUrl('https://thirdpartysource.microsoft.com/downloads');
   const jsonObjects = JSON.parse(jsonString);
-  const platformString = retrievePlatform();
-  let fullVersion = TARGET_VERSION;
-  if (version) {
-    fullVersion = getTargetVersion(version);
-  }
-  console.log('Downloading Microsoft Edge DevTools version ' + fullVersion + ' for ' + platformString);
+  const fullVersion = version ? targetVersionMap.get(version.toString()) : TARGET_VERSION;
+
+  console.log(`Downloading Microsoft Edge DevTools version ${fullVersion}`);
   for (let object of jsonObjects) {
-    if (object.product === 'Microsoft Edge DevTools' && object.release === fullVersion && object.platform === platformString) {
+    if (object.product === 'Microsoft Edge DevTools' && object.release === fullVersion) {
       return object.url;
     }
   }
 }
 
-function retrievePlatform() {
-  switch (process.platform) {
-    case 'win32':
-      return 'Windows x64';
-    default:
-      isWindows = false;
-      return 'Mac OS x64';
-  }
-}
-
-function removeLastDirectory(filepath) {
-  const splitChar = isWindows ? '\\' : '/';
-  const arr = filepath.split(splitChar);
-  arr.pop();
-  return( arr.join(splitChar) );
-}
-
 async function downloadZipFile(downloadUrl) {
-  const https = require('https');
-  const fs = require('fs-extra');
-  const unzipper = require('unzipper');
   await fs.remove('out/edge');
 
   const file = fs.createWriteStream('edge.zip');
-  const request = https.get(downloadUrl, function(response) {
+  https.get(downloadUrl, function(response) {
     response.pipe(file);
-    response.on('end', ()=>{
-      fs.createReadStream('edge.zip').pipe(unzipper.Extract({path: 'out/edge/'}));
-      fs.unlink('edge.zip', () => {} );
-      let dirName = __dirname;
-      if (isWindows) {
-        const flipSlashDirName = dirName.replace(/\//g, '\\');
-        const rootPath = removeLastDirectory(flipSlashDirName);
-        console.log('Edge files extracted to: ' + rootPath + '\\out\\edge\n');
-      } else {
-        const rootPath = removeLastDirectory(dirName);
-        console.log('Edge files extracted to: ' + rootPath + '/out/edge');
-      }
+    response.on('end', async ()=>{
+      await fs.createReadStream('edge.zip').pipe(unzipper.Extract({path: 'out/edge/'}));
+      await fs.unlink('edge.zip', () => {} );
+      const outdir = path.join(__dirname, 'out', 'edge');
+      console.log(`Edge files extracted to: ${outdir}`);
     });
   });
 }
 
-const version = process.argv.slice(2)[0];
-const downloadUrl = fetchDownloadUrl(version);
-downloadZipFile(downloadUrl);
+const usageMessage =
+`
+Script to download the devtools frontend files needed to build the extension
+node scripts/downloadAndExtractEdge --devtoolsVersion
+    devtoolsVersion: optional version number to build a specific version of devtools.
+    Defaults to latest version.
+`;
+
+async function main() {
+  const args = yargs.parse(process.argv);
+  if (args.usage) {
+    console.log(usageMessage);
+    return;
+  }
+  const version = args.devtoolsVersion || undefined;
+  const downloadUrl = fetchDownloadUrl(version);
+  await downloadZipFile(downloadUrl);
+}
+
+main();
